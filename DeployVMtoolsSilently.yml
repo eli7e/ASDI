@@ -1,0 +1,84 @@
+---
+ - name: Install VMtools silently
+   hosts: "{{ inventory_group }}"
+   gather_facts: yes
+   become_method: runas
+
+   tasks:
+
+    - name: Including Secret variables
+      include_vars:
+        file: /etc/ansible/playbooks/ramz.yml
+        name: ramz
+    - set_fact:
+         local_path: "c:\\scripts\\{{ filename }}"
+         shared_path: "/shared/software/{{ filename }}"
+
+    - name: copy the latest tools
+      win_copy:
+       src: "{{ shared_path }}"
+       dest: c:\scripts\
+       force: yes
+
+    - name: install vmware tools and suppress reboots
+      win_package:
+        path: "{{ local_path }}"
+        arguments: /S /v "/qn REBOOT=R"
+        product_id: "{{ filename | regex_replace('(?i)\\.exe$', '') }}"
+        state: present
+      register: vmware_tools_install
+
+    - name: add a custom attribute
+      vmware_guest_custom_attributes:
+       validate_certs: False
+       hostname: "{{ ramz.vmware_hostname}}"
+       username: "{{ ramz.vmware_username }}"
+       password: "{{ ramz.vmware_password }}"
+       name: "{{ ansible_hostname }}"
+       state: present
+       attributes:
+         - name: "vmtools upgraded on"
+           value: "{{ ansible_date_time.date }} - ver: latest - REBOOT needed"
+      delegate_to: localhost
+      ignore_errors: yes
+
+    - name: remove the attachment file
+      file:
+        path: /shared/logs/attachment.txt
+        state: absent
+      ignore_errors: yes
+      delegate_to: localhost
+
+    - name: touch the attachment file before it is written to
+      file:
+        path: /shared/logs/attachment.txt
+        state: touch
+      ignore_errors: yes
+      delegate_to: localhost
+
+    - name: add server name to the attachment file in ansible server
+      lineinfile:
+        path: /shared/logs/attachment.txt
+        line: "{{ ansible_hostname }}"
+      delegate_to: localhost
+
+    - name: Clean-up the uninstaller token file
+      win_file:
+        path: "{{ local_path }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: send email to them users
+      mail:
+       host: your_smtp_server
+       port: 25
+       from: ansible@acme.com
+       to: user@acme.com
+       subject: updating vmtools using ansible
+       attach: "/shared/logs/attachment.txt"
+       body: '<p>Greetings,</p>
+    <p><br /> VMTools were upgraded for the VMs in the attached file..</p>
+    <p>Please see the attached file for the servers affected by this here change</a></p>
+    <p><br /> <br /> <br /> Thanks,<br /> IT dept. </p>'
+       subtype: html
+      delegate_to: localhost
